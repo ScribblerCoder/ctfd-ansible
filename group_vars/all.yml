@@ -1,0 +1,38 @@
+arch: amd64
+
+ctfd:
+  version: 3.5.3
+  repo: https://github.com/CTFd/CTFd.git
+  path : /root/CTFd
+
+
+ctfd_whale_repo: https://github.com/ScribblerCoder/ctfd-whale
+ctfd_whale_branch: master
+
+frp:
+  version: 0.49.0
+  path: /root
+  repo: https://github.com/fatedier/frp
+
+frps:
+  bind_port: &frps_bind_port 7987
+  vhost_http_port: 80
+  subdomain_host: example.com
+  token: &frps_token changeme
+
+frpc:
+  server_addr: host.docker.internal
+  server_port: *frps_bind_port
+  admin_addr: 0.0.0.0
+  admin_port: 7400
+  admin_user: admin
+  admin_pwd: changeme
+  token: *frps_token
+
+
+docker_tls:
+  port: 2376
+  host: example.com
+  workdir: /root/docker_tls
+  passphrase: changeme
+  days: 1800

@@ -1,0 +1,13 @@
+[Unit]
+Description=Frp Server Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart={{ frp.path }}/frp_{{ frp.version }}_linux_{{ arch }}/frps -c {{ frp.path }}/frp_{{ frp.version }}_linux_{{ arch }}/frps.ini
+
+[Install]
+WantedBy=multi-user.target

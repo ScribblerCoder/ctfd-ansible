@@ -1,0 +1,133 @@
+- name: Initialize Docker Swarm
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: "{{ ansible_default_ipv4.address }}"
+
+- name: Update Docker node label
+  ansible.builtin.shell: "docker node update --label-add 'name=linux-1' $(docker node ls -q)"
+
+- name: Create overlay network
+  community.docker.docker_network:
+    name: challenges
+    driver: overlay
+    attachable: yes
+    state: present
+
+- name: Copy needed certifactes and keys
+  ansible.builtin.copy:
+    src: "./docker_tls/"
+    dest: "{{ docker_tls.workdir}}/"
+
+
+- name: Ensure systemd drop-in directory for Docker exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: '0755'
+
+- name: Add drop-in file to modify Docker ExecStart for TLS
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/override.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --tlsverify --tlscacert={{ docker_tls.workdir }}/ca.pem --tlscert={{ docker_tls.workdir }}/server-cert.pem --tlskey={{ docker_tls.workdir }}/server-key.pem -H tcp://0.0.0.0:{{ docker_tls.port }}
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+
+- name: Reload systemd to apply changes
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Restart Docker service to apply new configuration
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
+    enabled: yes
+
+- name: Download frp tar gzip
+  get_url:
+    url: "{{ frp.repo }}/releases/download/v{{ frp.version }}/frp_{{ frp.version }}_linux_{{ arch }}.tar.gz"
+    dest: "{{ frp.path }}.tar.gz"
+
+- name: Extract frp tar gzip
+  ansible.builtin.unarchive:
+    src: "{{ frp.path }}.tar.gz"
+    dest: "{{ frp.path }}"
+    creates: "{{ frp.path }}/frp_{{ frp.version }}_linux_{{ arch }}/frps"
+    remote_src: yes
+
+
+- name: Copy 404.html to frp
+  ansible.builtin.copy:
+    src: "404.html"
+    dest: "{{ frp.path }}/frp_{{ frp.version }}_linux_{{ arch }}/404.html"
+    mode: 0644
+
+- name: copy frps.ini template
+  ansible.builtin.template:
+    src: frps.ini.j2
+    dest: "{{ frp.path }}/frp_{{ frp.version }}_linux_{{ arch }}/frps.ini"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Deploy systemd unit file for FRP Server
+  ansible.builtin.template:
+    src: frps.service.j2
+    dest: /etc/systemd/system/frps.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - enable frp server
+    - start frp server
+
+- name: clone docker-frp
+  git:
+    repo: "https://github.com/ScribblerCoder/docker-frp"
+    dest: "/root/docker-frp"
+    version: "master"
+
+- name: Build docker frpc image
+  community.docker.docker_image:
+    name: "frpc"
+    tag: "latest"
+    build:
+      path: "/root/docker-frp" # Path to the Dockerfile and build context
+      args:
+        version: "{{ frp.version }}"
+    source: build
+    state: present
+    push: no
+
+- name: run frpc container
+  tags: run_frpc
+  community.docker.docker_container:
+    name: "frpc"
+    image: "frpc:latest"
+    state: started
+    ports:
+      - "{{ frpc.admin_port }}:{{ frpc.admin_port }}"
+    restart_policy: always
+    networks:
+      - name: challenges
+    command:
+      - "--server_addr={{ frpc.server_addr }}"
+      - "--server_port={{ frpc.server_port }}"
+      - "--admin_addr={{ frpc.admin_addr }}"
+      - "--admin_port={{ frpc.admin_port }}"
+      - "--admin_user={{ frpc.admin_user }}"
+      - "--admin_pwd={{ frpc.admin_pwd }}"
+      - "--token={{ frpc.token }}"
+    etc_hosts:
+      host.docker.internal: "host-gateway"
+
+- name: Ensure certificate directory exists
+  ansible.builtin.file:
+    path: "{{ docker_tls.workdir }}"
+    state: directory
+    mode: '0755'

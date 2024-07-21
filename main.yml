@@ -1,0 +1,250 @@
+---
+
+- hosts: all
+  become: yes
+  strategy: free
+  roles:
+    - common
+
+- hosts: localhost
+  tasks:
+    - name: Ensure temporary directory exists
+      file:
+        path: "./docker_tls"
+        state: directory
+        mode: '0755'
+
+
+    - name: Remove old certificate authority private key
+      file:
+        state: absent
+        path: "./docker_tls/ca-key.pem"
+
+    - name: Remove old certificate authority certificate
+      file:
+        state: absent
+        path: "./docker_tls/ca.pem"
+
+    - name: Generate certificate authority private key
+      command: >
+        openssl genrsa -aes256 \
+        -passout pass:{{ docker_tls.passphrase }} \
+        -out ./docker_tls/ca-key.pem 4096
+
+    - name: Generate certificate authority certificate
+      command: >
+        openssl req -new -x509 -days {{ docker_tls.days }} \
+        -key ./docker_tls/ca-key.pem -sha256 \
+        -out ./docker_tls/ca.pem \
+        -passin pass:{{ docker_tls.passphrase }} \
+        -subj '/C=XX/ST=XX/L=XX/O=XX/CN={{ docker_tls.host }}'
+
+    - name: Remove old client private key
+      file:
+        state: absent
+        path: "./docker_tls/key.pem"
+
+    - name: Remove old client certificate
+      file:
+        state: absent
+        path: "./docker_tls/cert.pem"
+
+    - name: Create client key
+      command: >
+        openssl genrsa -out ./docker_tls/key.pem 4096
+
+    - name: Create client csr
+      command: >
+        openssl req -subj '/CN=client' -new -key ./docker_tls/key.pem -out ./docker_tls/client.csr
+
+    - name: Remove extfile
+      file:
+        state: absent
+        path: "./docker_tls/extfile.cnf"
+
+    - name: Create extfile
+      file:
+        state: touch
+        path: "./docker_tls/extfile.cnf"
+
+    - name: Add extendedKeyUsage to extfile
+      lineinfile:
+        dest: "./docker_tls/extfile.cnf"
+        line: "extendedKeyUsage = clientAuth"
+
+
+    - name: Create client certificate
+      command: >
+        openssl x509 -req -days {{ docker_tls.days }} -sha256 \
+        -in ./docker_tls/client.csr \
+        -CA ./docker_tls/ca.pem \
+        -CAkey ./docker_tls/ca-key.pem \
+        -CAcreateserial -out ./docker_tls/cert.pem \
+        -extfile ./docker_tls/extfile.cnf \
+        -passin pass:{{ docker_tls.passphrase }}
+
+
+    - name: Remove old server private key
+      file:
+        state: absent
+        path: "./docker_tls/server-key.pem"
+
+    - name: Remove old server certificate
+      file:
+        state: absent
+        path: "./docker_tls/server-cert.pem"
+
+    - name: Create server key
+      command: >
+        openssl genrsa -out ./docker_tls/server-key.pem 4096
+
+
+    - name: Create server CSR
+      command: >
+        openssl req -subj '/CN=challenges.cscpsut.com' -sha256 \
+        -new -key ./docker_tls/server-key.pem \
+        -out ./docker_tls/server.csr
+
+
+    - name: Remove extfile
+      file:
+        state: absent
+        path: "./docker_tls/extfile.cnf" 
+
+    - name: Create extfile
+      file:
+        state: touch 
+        path: "./docker_tls/extfile.cnf"
+
+    - name: Add alt name to extfile
+      lineinfile:
+        dest: "./docker_tls/extfile.cnf"
+        line: "subjectAltName = DNS:{{ docker_tls.host }},IP:{{ groups['challenges_server'][0] }},IP:127.0.0.1"
+
+    - name: Create server certificate
+      command: >
+        openssl x509 -req -days {{ docker_tls.days }} -sha256 -in ./docker_tls/server.csr \
+        -CA ./docker_tls/ca.pem \
+        -CAkey ./docker_tls/ca-key.pem \
+        -CAcreateserial -out ./docker_tls/server-cert.pem \
+        -extfile ./docker_tls/extfile.cnf \
+        -passin pass:{{ docker_tls.passphrase }}
+
+    # - name: Ensure certificate directory exists
+    #   ansible.builtin.file:
+    #     path: "./docker_tls"
+    #     state: directory
+    #     mode: '0755'
+
+    # - name: Generate CA private key
+    #   community.crypto.openssl_privatekey:
+    #     path: "./docker_tls/ca-key.pem"
+    #     type: RSA
+    #     size: 4096
+    #     cipher: auto
+    #     passphrase: "{{ docker_tls.passphrase }}"
+    #     mode: '0400'
+    #   register: ca_key_gen
+    #   when: not ansible_check_mode
+
+    # - name: Generate CA certificate
+    #   community.crypto.x509_certificate:
+    #     path: "./docker_tls/ca.pem"
+    #     privatekey_path: "./docker_tls/ca-key.pem"
+    #     docker_tls.passphrase: "{{ docker_tls.passphrase }}"
+    #     provider: selfsigned
+    #     selfsigned_digest: "sha256"
+    #     entrust_not_after: +1800d
+    #     mode: '0444'
+    #   when: ca_key_gen is changed
+
+    # - name: Generate server private key
+    #   community.crypto.openssl_privatekey:
+    #     path: "./docker_tls/server-key.pem"
+    #     type: RSA
+    #     size: 4096
+    #     mode: '0400'
+    #   when: not ansible_check_mode
+
+    # - name: Generate server CSR
+    #   community.crypto.openssl_csr:
+    #     path: "./docker_tls/server.csr"
+    #     privatekey_path: "./docker_tls/server-key.pem"
+    #     subject:
+    #       commonName: "{{ docker_tls.host }}"
+    #     mode: '0444'
+    #   when: not ansible_check_mode
+
+    # - name: Create server extension file
+    #   ansible.builtin.copy:
+    #     dest: "./docker_tls/extfile.cnf"
+    #     content: |
+    #       subjectAltName = DNS:{{ docker_tls.host }},IP:{{ ansible_default_ipv4.address }},IP:127.0.0.1
+    #       extendedKeyUsage = serverAuth
+    #     mode: '0444'
+    #   when: not ansible_check_mode
+
+    # - name: Sign server certificate with CA using extension file
+    #   community.crypto.x509_certificate:
+    #     path: "./docker_tls/server-cert.pem"
+    #     privatekey_path: "./docker_tls/ca-key.pem"
+    #     csr_path: "./docker_tls/server.csr"
+    #     ownca_path: "./docker_tls/ca.pem"
+    #     ownca_privatekey_path: "./docker_tls/ca-key.pem"
+    #     ownca_docker_tls.passphrase: "{{ docker_tls.passphrase }}"
+    #     provider: ownca
+    #     selfsigned_digest: "sha256"
+    #     entrust_not_after: +1800d
+    #     mode: '0444'
+    #   when: not ansible_check_mode
+
+    # - name: Generate client private key
+    #   community.crypto.openssl_privatekey:
+    #     path: "./docker_tls/key.pem"
+    #     type: RSA
+    #     size: 4096
+    #     mode: '0400'
+    #   when: not ansible_check_mode
+
+    # - name: Generate client CSR
+    #   community.crypto.openssl_csr:
+    #     path: "./docker_tls/client.csr"
+    #     privatekey_path: "./docker_tls/key.pem"
+    #     subject:
+    #       commonName: "client"
+    #     mode: '0444'
+    #   when: not ansible_check_mode
+
+    # - name: Create client extension file
+    #   ansible.builtin.copy:
+    #     dest: "./docker_tls/extfile-client.cnf"
+    #     content: |
+    #       extendedKeyUsage = clientAuth
+    #     mode: '0444'
+    #   when: not ansible_check_mode
+
+    # - name: Sign client certificate with CA
+    #   community.crypto.x509_certificate:
+    #     path: "./docker_tls/cert.pem"
+    #     csr_path: "./docker_tls/client.csr"
+    #     ownca_path: "./docker_tls/ca.pem"
+    #     ownca_privatekey_path: "./docker_tls/ca-key.pem"
+    #     ownca_docker_tls.passphrase: "{{ docker_tls.passphrase }}"
+    #     provider: ownca
+    #     entrust_not_after: +1800d
+    #     mode: '0444'
+    #   when: not ansible_check_mode
+
+
+- hosts: challenges_server
+  become: yes
+  strategy: free
+  roles:
+    - challenges-server
+
+
+- hosts: ctfd
+  become: yes
+  strategy: free
+  roles:
+    - ctfd

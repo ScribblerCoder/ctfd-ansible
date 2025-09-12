@@ -101,7 +101,7 @@
 
     - name: Create server CSR
       command: >
-        openssl req -subj '/CN=challenges.cscpsut.com' -sha256 \
+        openssl req -subj '/CN={{ docker_tls.host }}' -sha256 \
         -new -key ./docker_tls/server-key.pem \
         -out ./docker_tls/server.csr
 

@@ -1,3 +1,4 @@
 Vagrantfile
 .vagrant/
 docker_tls/
+inventory/hosts
